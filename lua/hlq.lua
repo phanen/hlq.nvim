@@ -68,19 +68,19 @@ end
 ---@param buf integer
 ---@param line string
 ---@param lnum integer 0-index
+---@param code string
 ---@param codehl boolean
-local hlitem = function(buf, line, lnum, codehl)
-  local offset, path, dir, _, _, _, qcode =
+local hlitem = function(buf, line, lnum, code, codehl)
+  local offset, path, dir, _, _, _, _ =
     line:match('^(((.-/)([^/│%s]+))%s-│%s*(%d+):(%d+)%s*│ )(.*)$')
   if not path or not dir then return end
-  local _, hl = require('mini.icons').get('file', path)
-  if not hl then return end
   set_extmarks(buf, ns, lnum, 0, { end_col = dir:len(), hl_group = 'Directory' })
-  set_extmarks(buf, ns, lnum, dir:len(), { end_col = path:len(), hl_group = hl })
-  if not codehl or not offset or not qcode or qcode:match('^%s+$') then return end -- TODO: diagnostic/symbols
+  local _, hl = require('mini.icons').get('file', path)
+  if hl then set_extmarks(buf, ns, lnum, dir:len(), { end_col = path:len(), hl_group = hl }) end
+  if not codehl or not offset or code:match('^%s+$') then return end -- TODO: diagnostic/symbols
   local ft = filetype_match(path) -- TODO: maybe already matched in mini.icons?
   if not ft then return end
-  local marks = require('snacks.picker.util.highlight').get_highlights({ code = qcode, ft = ft }) ---@type table
+  local marks = require('snacks.picker.util.highlight').get_highlights({ code = code, ft = ft }) ---@type table
   if not marks or not marks[1] or not marks[1][1] then return end
   local off = offset:len()
   for _, mark in ipairs(marks[1]) do
@@ -91,35 +91,64 @@ local hlitem = function(buf, line, lnum, codehl)
   end
 end
 
+---@class hlq.item: BqfQfItem
+---@field color? boolean
+
+---@class hlq.list: BqfQfList
+---@field _changedtick integer
+---@field items fun(self: hlq.list): hlq.item[]
+
+---@param win integer
+---@return hlq.list?
+local getlist = function(win)
+  return vim.F.npcall(function() return require('bqf.qfwin.session'):get(win):list() end)
+end
+
 ---@param win integer
 ---@param buf integer
-local hlq = function(win, buf)
+---@param list? hlq.list
+local hlq = function(win, buf, list)
   if not api.nvim_win_is_valid(win) then return end
-  local qfs = require('bqf.qfwin.session')
   local info = fn.getwininfo(win)[1]
   if not info then return end
-  local items = vim.F.npcall(function() return qfs:get(win):list():items() end)
-  if not items then return end
+  list = list or getlist(win)
+  if not list then return end
+  local items = list:items()
   local codehl = can_hl((vim.w[win].quickfix_title or ''):lower())
   for i = info.topline, info.botline do
     local v = items[i]
-    if v and v.valid == 1 then
+    if v and v.valid == 1 and not v.color then
       local line = api.nvim_buf_get_lines(buf, i - 1, i, false)[1]
-      if line then hlitem(buf, line, i - 1, codehl) end
+      if line then
+        hlitem(buf, line, i - 1, v.text, codehl and v.type == '')
+        v.color = true
+      end
     end
   end
 end
 
+local attached = {}
 function M.enable()
   filetype_match = vim.func._memoize(1, filetype_match)
   _G.qftf = qftf
   vim.o.qftf = '{info -> v:lua._G.qftf(info)}'
+  local group = api.nvim_create_augroup('u.hlq', {})
   api.nvim_create_autocmd('BufReadPost', {
+    group = group,
     pattern = 'quickfix',
     callback = function(ev)
       local buf = ev.buf
-      vim.schedule_wrap(hlq)(fn.bufwinid(buf), buf)
+      local win = fn.bufwinid(buf)
+      vim.schedule(function()
+        local list = getlist(win)
+        if not list then return end
+        list._changedtick = api.nvim_buf_get_changedtick(buf) -- buftick must >= qftick
+        hlq(win, buf, list)
+      end)
+      if attached[buf] then return end
+      attached[buf] = true
       api.nvim_create_autocmd({ 'WinScrolled' }, {
+        group = group,
         buffer = buf,
         callback = function(ev0)
           hlq(tonumber(ev0.match) --[[@as integer]], buf)
