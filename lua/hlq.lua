@@ -65,33 +65,48 @@ local can_hl = function(title)
   )
 end
 
----@param buf integer
----@param line string
----@param lnum integer 0-index
+---@param item hlq.item
+---@param buf integer quickfix buf
+---@param lnum integer quickfix lnum 0-index
+---@return string?, integer?, string?, integer?
+local parse_item = function(item, buf, lnum)
+  local line = api.nvim_buf_get_lines(buf, lnum, lnum + 1, false)[1]
+  if not line then return end
+  if item.user_data and item.user_data.diff then
+    local path, dir = line:match('^%S%s((.+/)[^/]+)$')
+    return path, 2, dir, nil
+  end
+  local codeoff, path, dir = line:match('^(((.-/)([^/│]-))%s-│%s*(%d+):(%d+)%s*│ )(.*)$')
+  return path, 0, dir, codeoff and codeoff:len() or nil
+end
+
+---@param item hlq.item
+---@param buf integer quickfix buf
+---@param lnum integer quickfix lnum 0-index
 ---@param code string
 ---@param codehl boolean
-local hlitem = function(buf, line, lnum, code, codehl)
-  local offset, path, dir, _, _, _, _ =
-    line:match('^(((.-/)([^/│%s]+))%s-│%s*(%d+):(%d+)%s*│ )(.*)$')
-  if not path or not dir then return end
-  set_extmarks(buf, ns, lnum, 0, { end_col = dir:len(), hl_group = 'Directory' })
+local hlitem = function(item, buf, lnum, code, codehl)
+  local path, off, dir, codeoff = parse_item(item, buf, lnum)
+  if not path or not dir or not off then return end
+  set_extmarks(buf, ns, lnum, off, { end_col = off + dir:len(), hl_group = 'Directory' })
   local _, hl = require('mini.icons').get('file', path)
-  if hl then set_extmarks(buf, ns, lnum, dir:len(), { end_col = path:len(), hl_group = hl }) end
-  if not codehl or not offset or code:match('^%s+$') then return end -- TODO: diagnostic/symbols
+  if hl then
+    set_extmarks(buf, ns, lnum, off + dir:len(), { end_col = off + path:len(), hl_group = hl })
+  end
+  if not codehl or not codeoff or code:match('^%s+$') then return end -- TODO: diagnostic/symbols
   local ft = filetype_match(path) -- TODO: maybe already matched in mini.icons?
   if not ft then return end
   local marks = require('snacks.picker.util.highlight').get_highlights({ code = code, ft = ft }) ---@type table
   if not marks or not marks[1] or not marks[1][1] then return end
-  local off = offset:len()
   for _, mark in ipairs(marks[1]) do
-    set_extmarks(buf, ns, lnum, mark.col + off, {
-      end_col = mark.end_col + off,
+    set_extmarks(buf, ns, lnum, mark.col + codeoff, {
+      end_col = mark.end_col + codeoff,
       hl_group = mark.hl_group,
     })
   end
 end
 
----@class hlq.item: BqfQfItem
+---@class hlq.item: BqfQfItem, vim.quickfix.entry
 ---@field color? boolean
 
 ---@class hlq.list: BqfQfList
@@ -116,19 +131,16 @@ local hlq = function(win, buf, list)
   local items = list:items()
   local codehl = can_hl((vim.w[win].quickfix_title or ''):lower())
   for i = info.topline, info.botline do
-    local v = items[i]
-    if v and v.valid == 1 and not v.color then
-      local line = api.nvim_buf_get_lines(buf, i - 1, i, false)[1]
-      if line then
-        hlitem(buf, line, i - 1, v.text, codehl and v.type == '')
-        v.color = true
-      end
+    local item = items[i]
+    if item and not item.color then
+      hlitem(item, buf, i - 1, item.text, codehl)
+      item.color = true
     end
   end
 end
 
 local attached = {}
-function M.enable()
+M.enable = function()
   filetype_match = vim.func._memoize(1, filetype_match)
   _G.qftf = qftf
   vim.o.qftf = '{info -> v:lua._G.qftf(info)}'
