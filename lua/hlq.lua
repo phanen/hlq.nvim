@@ -96,7 +96,9 @@ local hlitem = function(item, buf, lnum, code, codehl)
   if not codehl or not codeoff or code:match('^%s+$') then return end -- TODO: diagnostic/symbols
   local ft = filetype_match(path) -- TODO: maybe already matched in mini.icons?
   if not ft then return end
-  local marks = require('snacks.picker.util.highlight').get_highlights({ code = code, ft = ft }) ---@type table
+  local highlight = vim.F.npcall(require, 'snacks.picker.util.highlight')
+  if not highlight then return end
+  local marks = highlight.get_highlights({ code = code, ft = ft }) ---@type table
   if not marks or not marks[1] or not marks[1][1] then return end
   for _, mark in ipairs(marks[1]) do
     set_extmarks(buf, ns, lnum, mark.col + codeoff, {
@@ -155,6 +157,7 @@ M.enable = function()
         local list = getlist(win)
         if not list then return end
         list._changedtick = api.nvim_buf_get_changedtick(buf) -- buftick must >= qftick
+        api.nvim_buf_clear_namespace(buf, ns, 0, -1)
         hlq(win, buf, list)
       end)
       if attached[buf] then return end
