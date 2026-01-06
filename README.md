@@ -4,11 +4,10 @@ Highlight quickfix on scroll.
 
 Dependencies:
 * nvim-bqf
-* mini.icons
 * snacks.picker.util.highlight
 
 ## todo
-* work with $LS_COLORS to get rid of mini.icons dependencies
+* remove snacks dependencies: https://github.com/neovim/neovim/pull/28412
 
 ## credits
 * qftf: https://github.com/kevinhwang91/nvim-bqf/blob/dd17c73912487dccb372deff85d4262d2b89bc2b/README.md#L661

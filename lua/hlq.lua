@@ -1,3 +1,6 @@
+local u = {
+  lscolors = require('hlq.lscolors'),
+}
 ---START INJECT hlq.lua
 
 local M = {}
@@ -89,12 +92,12 @@ local hlitem = function(item, buf, lnum, code, codehl)
   local path, off, dir, codeoff = parse_item(item, buf, lnum)
   if not path or not dir or not off then return end
   set_extmarks(buf, ns, lnum, off, { end_col = off + dir:len(), hl_group = 'Directory' })
-  local _, hl = require('mini.icons').get('file', path)
+  local hl = u.lscolors.get_hl(item.filename or api.nvim_buf_get_name(item.bufnr) or path)
   if hl then
     set_extmarks(buf, ns, lnum, off + dir:len(), { end_col = off + path:len(), hl_group = hl })
   end
   if not codehl or not codeoff or code:match('^%s+$') then return end -- TODO: diagnostic/symbols
-  local ft = filetype_match(path) -- TODO: maybe already matched in mini.icons?
+  local ft = filetype_match(path)
   if not ft then return end
   local highlight = vim.F.npcall(require, 'snacks.picker.util.highlight')
   if not highlight then return end
@@ -126,13 +129,11 @@ end
 ---@param list? hlq.list
 local hlq = function(win, buf, list)
   if not api.nvim_win_is_valid(win) then return end
-  local info = fn.getwininfo(win)[1]
-  if not info then return end
   list = list or getlist(win)
   if not list then return end
   local items = list:items()
   local codehl = can_hl((vim.w[win].quickfix_title or ''):lower())
-  for i = info.topline, info.botline do
+  for i = fn.line('w0', win), fn.line('w$', win) do
     local item = items[i]
     if item and not item.color then
       hlitem(item, buf, i - 1, item.text, codehl)
@@ -156,9 +157,11 @@ M.enable = function()
       vim.schedule(function()
         local list = getlist(win)
         if not list then return end
+        local savetick = list._changedtick
         list._changedtick = api.nvim_buf_get_changedtick(buf) -- buftick must >= qftick
         api.nvim_buf_clear_namespace(buf, ns, 0, -1)
         hlq(win, buf, list)
+        list._changedtick = savetick
       end)
       if attached[buf] then return end
       attached[buf] = true
