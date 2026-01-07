@@ -10,6 +10,7 @@ local cache = {
   default_hl = nil,
   needs_metadata = false,
   overrides = {},
+  hl = {},
 }
 
 local MODE_KEYS = {
@@ -64,6 +65,15 @@ local ANSI_COLORS = {
   [97] = 'LightGray',
 }
 
+---@param name string Highlight group name, e.g. "ErrorMsg"
+---@param val vim.api.keyset.highlight Highlight definition map, accepts the following keys:
+local set_hl = function(name, val)
+  vim.api.nvim_set_hl(0, name, val)
+  cache.hl[name] = val
+end
+
+---@param code string
+---@return table
 local parse_ansi_code = function(code)
   local parts = vim.split(code, ';', { plain = true })
   local styles = {}
@@ -116,6 +126,9 @@ local parse_ansi_code = function(code)
   return { styles = styles, fg = fg, bg = bg }
 end
 
+---@param name string
+---@param opts table
+---@return string?
 local create_hlgroup = function(name, opts)
   local ns = 'u.lscolors'
   local clean_name = name:gsub('[^%w_]', '_')
@@ -133,7 +146,7 @@ local create_hlgroup = function(name, opts)
   hl_opts.bg = opts.bg
 
   if next(hl_opts) then
-    vim.api.nvim_set_hl(0, hl_name, hl_opts)
+    set_hl(hl_name, hl_opts)
     return hl_name
   end
 end
@@ -167,7 +180,7 @@ M.parse = function(force)
         cache.ext_map[ext] = create_hlgroup('ext_' .. ext:gsub('%.', '_'), opts)
       elseif key ~= 'rs' and key ~= 'lc' and key ~= 'rc' and key ~= 'ec' then
         cache.glob_map[#cache.glob_map + 1] =
-          { key, vim.regex(vim.fn.glob2regpat(key)), create_hlgroup('glob_' .. key, opts) }
+          { key, vim.glob.to_lpeg(key), create_hlgroup('glob_' .. key, opts) }
       end
     end
   end
@@ -227,6 +240,10 @@ M.get_mode_from_stat = function(filepath, stat)
   end
 end
 
+---@param hl_name string
+---@return vim.api.keyset.highlight
+M.get_info = function(hl_name) return cache.hl[hl_name] end
+
 ---@param filename string
 ---@param mode? string
 ---@return string?
@@ -237,8 +254,8 @@ M.get_hl = function(filename, mode)
   if mode and cache.mode_map[mode] then return cache.mode_map[mode] end
 
   for _, ctx in ipairs(cache.glob_map) do
-    local pattern, regex, hl = unpack(ctx)
-    if regex:match_str(filename) then return cache.overrides[pattern] or hl end
+    local pattern, lpeg, hl = unpack(ctx)
+    if lpeg:match(filename) then return cache.overrides[pattern] or hl end
   end
 
   local parts = vim.split(vim.fs.basename(filename), '%.')
