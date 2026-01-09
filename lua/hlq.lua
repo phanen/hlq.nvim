@@ -125,10 +125,11 @@ local getlist = function(win)
 end
 
 ---@param win integer
----@param buf integer
+---@param buf? integer
 ---@param list? hlq.list
 local hlq = function(win, buf, list)
   if not api.nvim_win_is_valid(win) then return end
+  buf = buf or api.nvim_win_get_buf(win)
   list = list or getlist(win)
   if not list then return end
   local items = list:items()
@@ -142,36 +143,40 @@ local hlq = function(win, buf, list)
   end
 end
 
-local attached = {}
 M.enable = function()
   filetype_match = vim.func._memoize(1, filetype_match)
   _G.qftf = qftf
   vim.o.qftf = '{info -> v:lua._G.qftf(info)}'
   local group = api.nvim_create_augroup('u.hlq', {})
+  api.nvim_create_autocmd('WinScrolled', {
+    group = group,
+    callback = function()
+      for winstr, change in pairs(vim.v.event) do
+        if winstr ~= 'all' and change.topline ~= 0 then
+          local win = tonumber(winstr) ---@as integer
+          local ty = fn.win_gettype(win)
+          if ty == 'quickfix' or ty == 'loclist' then hlq(win) end
+        end
+      end
+    end,
+  })
   api.nvim_create_autocmd('BufReadPost', {
     group = group,
     pattern = 'quickfix',
     callback = function(ev)
       local buf = ev.buf
       local win = fn.bufwinid(buf)
-      vim.schedule(function()
+      local refresh = function()
         local list = getlist(win)
         if not list then return end
         local savetick = list._changedtick
+        if not api.nvim_buf_is_valid(buf) then return end
         list._changedtick = api.nvim_buf_get_changedtick(buf) -- buftick must >= qftick
         api.nvim_buf_clear_namespace(buf, ns, 0, -1)
         hlq(win, buf, list)
         list._changedtick = savetick
-      end)
-      if attached[buf] then return end
-      attached[buf] = true
-      api.nvim_create_autocmd({ 'WinScrolled' }, {
-        group = group,
-        buffer = buf,
-        callback = function(ev0)
-          hlq(tonumber(ev0.match) --[[@as integer]], buf)
-        end,
-      })
+      end
+      vim.schedule(refresh)
     end,
   })
 end
